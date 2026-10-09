@@ -1,5 +1,0 @@
-gradio>=4.0
-ultralytics>=8.1
-openai>=1.0
-Pillow>=10.0
-python-dotenv>=1.0
