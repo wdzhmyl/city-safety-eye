@@ -1,0 +1,27 @@
+# ===== 模型权重（首次运行自动下载，无需入库）=====
+*.pt
+*.onnx
+*.engine
+
+# ===== Python 缓存 =====
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# ===== 环境变量 / 密钥 =====
+.env
+
+# ===== 运行时临时文件 / 缓存 =====
+.gradio/
+tmp/
+*.tmp
+*.log
+
+# ===== 归档旧版（原始 zip 备份在 city_safety_eye_deploy/）=====
+legacy/
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db

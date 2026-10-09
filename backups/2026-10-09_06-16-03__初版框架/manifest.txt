@@ -1,0 +1,34 @@
+backup_time : 2026-10-09_06-16-03
+name        : 初版框架
+note        : 
+git_commit  : edf2feec960e624208425fd397559e0153443387
+git_status  : ?? backups/
+?? tools/backup_source.py
+file_count  : 25
+
+files:
+  .env.example
+  .gitignore
+  README.md
+  assets/architecture.png
+  assets/bus.jpg
+  assets/zidane.jpg
+  config/__init__.py
+  config/settings.py
+  core/__init__.py
+  core/detector.py
+  core/reporter.py
+  core/template.py
+  interfaces/__init__.py
+  interfaces/web.py
+  pipeline/__init__.py
+  pipeline/analyze.py
+  requirements.txt
+  tests/__init__.py
+  tests/test_smoke.py
+  tools/backup_source.py
+  tools/generate_architecture.py
+  utils/__init__.py
+  utils/draw.py
+  utils/imageio.py
+  创作说明模板.md
