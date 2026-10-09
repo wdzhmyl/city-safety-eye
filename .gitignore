@@ -16,6 +16,8 @@ __pycache__/
 # ===== 运行时临时文件 / 缓存 =====
 .gradio/
 tmp/
+# 实时监控自动/主动截屏存证（运行时生成，不入库）
+screenshots/
 *.tmp
 *.log
 

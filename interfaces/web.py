@@ -2,17 +2,19 @@
 
 含两个页面：
 - 「工地图片巡检」：单张图片上传分析（云端/兜底报告）。
-- 「实时监控」：摄像头/监控源逐帧实时检测（边缘端 7×24 盯防），云端研判按需触发。
+- 「🎥 实时监控」：**解耦的摄像头监控**——前端可搜索/选择摄像头（本地 / 手机 / 网络 RTSP），
+  服务端逐帧边缘检测 + 危险区预警，支持**主动截屏**与**异常自动截屏存证**。
 """
 
 import os
 import sys
 import tempfile
 import threading
+import time
 from collections import Counter
 
+import cv2
 import gradio as gr
-from PIL import Image
 
 # 兼容 `python interfaces/web.py` 直接启动：把项目根目录加入模块搜索路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -22,7 +24,7 @@ from pipeline.collab import analyze_image
 from core.edge_infer import infer, check_danger_zone
 from core.cloud_reason import generate_report
 from utils.visualize import draw_detections
-from utils.imgio import new_tempfile
+from utils.camera import CameraManager
 
 # 当前运行模式（决定报告来源），用于界面提示
 MODE = "云端大模型研判（多模态）" if settings.LLM_API_KEY else "本地离线兜底（未配置 API Key）"
@@ -50,10 +52,14 @@ USAGE = f"""## 使用说明
 1. 左侧上传一张**工地现场图片**，或点击示例图一键试用。
 2. 点击 **🔍 开始巡检**，右侧展示**带检测框的结果图**（危险作业区以橙框标出，闯入目标标红），并自动生成《施工安全巡检报告》。
 
-### 实时监控（摄像头 / 监控接入）
-切换到「🎥 实时监控」页，选择摄像头即可开启**边缘端逐帧实时检测**：每帧本地运行 YOLOv8n 并叠加危险作业区规则，
-检测框、闯入标红与"实时告警"同步刷新。**云端大模型研判为按需触发**（点"生成云端研判报告"），
-边缘 7×24 低成本盯防、仅在需要时调用云端——这正是端云协同 / 推理优化的生产范式。
+### 🎥 实时监控（解耦摄像头 + 截屏存证）
+切换到「🎥 实时监控」页：
+1. 点 **🔍 搜索摄像头** 自动发现本机摄像头；
+2. 手机的摄像头请用 **IP 摄像头 App**（如 IP Webcam / DroidCam）把手机变成网络视频流，
+   在"添加网络摄像头地址"框粘贴地址（如 `http://手机IP:8080/video` 或 `rtsp://...`），点 ➕ 添加；
+3. 在下拉框**选择摄像头** → 点 **▶ 开启监控**，即开始边缘端逐帧实时检测；
+4. 检测到**危险作业区闯入**时会**自动截屏存证**（标记问题），也可随时点 **📸 主动截屏**；
+5. 右侧画廊与记录可回看所有截图，便于专业管理。
 
 ### 危险作业区规则
 画面右侧默认圈定一块"危险作业区"，**作业人员 / 工程车辆**等进入该区域即被记为闯入违规（标红预警）。
@@ -66,8 +72,8 @@ USAGE = f"""## 使用说明
 ### 技术架构（分层解耦 · 端云协同）
 - **配置层** `config/`：场景、模型、API、阈值、标签与危险区规则
 - **边缘推理层** `core/edge_infer.py`：YOLOv8n 本地轻量推理 + 危险区闯入判定（CPU）
+- **工具层** `utils/camera.py`：与 UI 解耦的摄像头管理（本地发现 / 网络流）
 - **云端理解层** `core/cloud_reason.py` + **离线兜底层** `core/fallback_report.py`：施工安全报告 / 离线兜底
-- **工具层** `utils/`：可视化、图片读写
 - **编排层** `pipeline/collab.py`：边缘推理→危险区规则→云端理解→可视化 串联
 - **交互层** `interfaces/`：本网页
 
@@ -83,12 +89,26 @@ footer { visibility: hidden; }
 #header { margin-bottom: 4px; }
 """
 
-# ===== 实时监控的状态（流式逐帧更新，线程安全）=====
+# ===== 实时监控：解耦摄像头 + 状态（线程安全）=====
 _MONITOR_DIR = tempfile.mkdtemp(prefix="eci_monitor_")
-_FRAME_PATH = os.path.join(_MONITOR_DIR, "frame.jpg")   # 每帧覆盖写入，避免临时文件膨胀
+_FRAME_PATH = os.path.join(_MONITOR_DIR, "frame.jpg")   # 每帧覆盖写入（RGB，便于可视化与云端看图）
 _OUT_PATH = os.path.join(_MONITOR_DIR, "out.jpg")
-_state = {"detections": [], "intrusions": [], "alert": "等待摄像头接入…"}
-_state_lock = threading.Lock()
+SCREENSHOT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "screenshots")
+os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+
+cam_mgr = CameraManager()
+_lock = threading.Lock()
+_state_rt = {                       # 实时监控共享状态
+    "monitoring": False,
+    "annotated": None,              # 当前标注帧（RGB numpy），用于前端推流
+    "raw": None,                    # 当前原始帧（BGR numpy），用于截屏
+    "alert": "未开启监控",
+    "detections": [],
+    "intrusions": [],
+}
+SOURCE_CHOICES = []                 # [(value, label), ...] 摄像头源列表
+NET_SOURCES = []                    # 用户添加的网络/手机流地址
+shot_log = []                       # (path, tag, ts, note)
 
 
 def build_summary(detections, intrusions=None):
@@ -103,38 +123,160 @@ def build_summary(detections, intrusions=None):
     return lines
 
 
-def monitor(frame):
-    """摄像头逐帧回调：边缘端实时检测 + 危险区规则，返回标注帧与告警文本。
+def build_shot_md():
+    if not shot_log:
+        return "#### 截图记录\n暂无截图"
+    lines = ["#### 截图记录"] + [
+        f"- [{tag}] {ts} · {note}" for _, tag, ts, note in shot_log[-12:][::-1]
+    ]
+    return "\n".join(lines)
 
-    云端研判不在此处调用（按需触发），以保证实时性与低成本。
-    """
-    if frame is None:
-        return None, _state["alert"]
-    try:
-        Image.fromarray(frame).save(_FRAME_PATH)
-        detections, _ = infer(_FRAME_PATH)
+
+def do_discover():
+    """搜索本机摄像头 + 合并已添加的网络源，刷新下拉列表。"""
+    idxs = cam_mgr.discover()
+    local = [(f"local:{i}", f"本地摄像头 {i}") for i in idxs]
+    net = [(f"net:{u}", f"网络摄像头 {u}") for u in NET_SOURCES]
+    SOURCE_CHOICES.clear()
+    SOURCE_CHOICES.extend(local + net)
+    choices = [label for _, label in SOURCE_CHOICES]
+    value = SOURCE_CHOICES[0][0] if SOURCE_CHOICES else None
+    if not SOURCE_CHOICES:
+        return gr.update(choices=["（未找到可用摄像头）"], value=None)
+    return source_dd.update(choices=choices, value=value)
+
+
+def add_network(url):
+    """添加网络/手机摄像头流地址（RTSP 或 http 视频流）。"""
+    url = (url or "").strip()
+    if not url:
+        return gr.update(), "请输入摄像头地址（如 http://手机IP:8080/video 或 rtsp://...）"
+    if url not in NET_SOURCES:
+        NET_SOURCES.append(url)
+        local = [(v, l) for v, l in SOURCE_CHOICES if v.startswith("local:")]
+        net = [(f"net:{u}", f"网络摄像头 {u}") for u in NET_SOURCES]
+        SOURCE_CHOICES.clear()
+        SOURCE_CHOICES.extend(local + net)
+    return gr.update(choices=[l for _, l in SOURCE_CHOICES], value=f"net:{url}"), f"✅ 已添加网络摄像头：{url}"
+
+
+def start_monitor(value):
+    """打开所选摄像头并开始监控。"""
+    if not value:
+        return "请先搜索并选择摄像头"
+    kind, _, arg = value.partition(":")
+    ok = cam_mgr.open(int(arg) if kind == "local" else arg)
+    if not ok:
+        return f"⚠️ 打开失败：{value}（请确认设备或地址可用，手机需先开启 IP 摄像头 App）"
+    with _lock:
+        _state_rt["monitoring"] = True
+    return f"✅ 已开启监控：{value}"
+
+
+def stop_monitor():
+    with _lock:
+        _state_rt["monitoring"] = False
+    cam_mgr.release()
+    return "⏹ 已停止监控"
+
+
+def save_screenshot(mark=True, auto=False):
+    """保存当前帧为截图。mark=True 时叠加检测框与问题标记（危险区/闯入标红）。"""
+    with _lock:
+        raw = _state_rt["raw"]
+        dets = _state_rt["detections"]
+        intr = _state_rt["intrusions"]
+        monitoring = _state_rt["monitoring"]
+    if raw is None or not monitoring:
+        return None
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    tag = "自动" if auto else "主动"
+    note = "危险区闯入" if intr else "常规巡检"
+    path = os.path.join(SCREENSHOT_DIR, f"{tag}_{ts}.jpg")
+    if mark:
+        tmp = os.path.join(_MONITOR_DIR, "shot_raw.jpg")
+        cv2.imwrite(tmp, cv2.cvtColor(raw, cv2.COLOR_BGR2RGB))
+        draw_detections(tmp, dets, path)
+    else:
+        cv2.imwrite(path, cv2.cvtColor(raw, cv2.COLOR_BGR2RGB))
+    shot_log.append((path, tag, ts, note))
+    return path
+
+
+def manual_shot():
+    p = save_screenshot(mark=True, auto=False)
+    if p is None:
+        return "请先开启监控再截屏", build_shot_md()
+    return f"📸 已主动截屏：{os.path.basename(p)}", build_shot_md()
+
+
+def make_report_rt():
+    """基于当前画面生成云端/兜底研判报告（端云协同：边缘盯防、云端按需想）。"""
+    with _lock:
+        dets = _state_rt["detections"]
+        intr = _state_rt["intrusions"]
+        monitoring = _state_rt["monitoring"]
+    if not monitoring:
+        return "请先开启监控"
+    return generate_report(dets, _FRAME_PATH, intrusions=intr)
+
+
+def refresh_ui():
+    """定时刷新告警、截图画廊与记录（由 gr.Timer 调用）。"""
+    with _lock:
+        alert = _state_rt["alert"]
+    gallery = [p for p, _, _, _ in shot_log][-12:][::-1]
+    return alert, gallery, build_shot_md()
+
+
+def stream_gen():
+    """持续向前端推流当前标注帧（未开启监控时推送 None）。"""
+    while True:
+        with _lock:
+            monitoring = _state_rt["monitoring"]
+            annotated = _state_rt["annotated"]
+        yield annotated if (monitoring and annotated is not None) else None
+        time.sleep(0.03)
+
+
+def processing_loop():
+    """后台采集线程：逐帧边缘检测 + 危险区规则 + 自动截屏（解耦，无需前端干预）。"""
+    last_auto = 0.0
+    while True:
+        with _lock:
+            monitoring = _state_rt["monitoring"]
+        if not monitoring:
+            time.sleep(0.1)
+            continue
+        frame = cam_mgr.read()
+        if frame is None:
+            time.sleep(0.05)
+            continue
+        # 检测（直接传 numpy 帧，免落盘）
+        detections, _ = infer(frame)
         h, w = frame.shape[:2]
         intrusions, _ = check_danger_zone(detections, (w, h))
+        # 保存 RGB 帧用于可视化/云端看图，并绘制标注
+        cv2.imwrite(_FRAME_PATH, cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         draw_detections(_FRAME_PATH, detections, _OUT_PATH)
-
+        annotated = cv2.cvtColor(cv2.imread(_OUT_PATH), cv2.COLOR_BGR2RGB)
         alert = build_summary(detections, intrusions)
-        with _state_lock:
-            _state["detections"] = detections
-            _state["intrusions"] = intrusions
-            _state["alert"] = alert
-        return _OUT_PATH, alert
-    except Exception as e:  # noqa: BLE001
-        return None, f"识别出错：{e}"
+        with _lock:
+            _state_rt["annotated"] = annotated
+            _state_rt["raw"] = frame.copy()
+            _state_rt["detections"] = detections
+            _state_rt["intrusions"] = intrusions
+            _state_rt["alert"] = alert
+        # 危险区闯入时自动截屏存证（3 秒内最多一次，避免刷屏）
+        now = time.time()
+        if intrusions and now - last_auto > 3:
+            save_screenshot(mark=True, auto=True)
+            last_auto = now
+        time.sleep(0.03)
 
 
-def make_report():
-    """按需生成云端/兜底研判报告（基于最近一帧画面）。"""
-    with _state_lock:
-        detections = _state["detections"]
-        intrusions = _state["intrusions"]
-    if not detections and not os.path.exists(_FRAME_PATH):
-        return "请先开启实时监控并等待一帧画面。"
-    return generate_report(detections, _FRAME_PATH, intrusions=intrusions)
+# 启动后台采集线程（守护线程，随进程退出）
+threading.Thread(target=processing_loop, daemon=True).start()
 
 
 def analyze(image):
@@ -176,23 +318,47 @@ with gr.Blocks(title="智慧工地安全巡检平台") as demo:
         with gr.Tab("🎥 实时监控"):
             with gr.Row(equal_height=False):
                 with gr.Column(scale=1):
-                    cam = gr.Image(
-                        label="监控画面（边缘端逐帧实时检测）",
-                        sources=["webcam"], streaming=True, height=360,
+                    with gr.Row():
+                        discover_btn = gr.Button("🔍 搜索摄像头")
+                        add_url = gr.Textbox(
+                            label="添加网络/手机摄像头地址",
+                            placeholder="如 http://手机IP:8080/video 或 rtsp://...",
+                            scale=3,
+                        )
+                        add_btn = gr.Button("➕ 添加", scale=1)
+                    source_dd = gr.Dropdown(
+                        label="选择摄像头（本地 / 手机 / 网络）",
+                        choices=[], value=None, interactive=True,
                     )
-                    report_btn = gr.Button("📝 生成云端研判报告", variant="primary")
+                    with gr.Row():
+                        start_btn = gr.Button("▶ 开启监控", variant="primary", scale=2)
+                        stop_btn = gr.Button("⏹ 停止监控", scale=1)
+                    shot_btn = gr.Button("📸 主动截屏（标记问题）")
+                    report_btn = gr.Button("📝 生成云端研判报告")
+                    status_md = gr.Markdown("点击「搜索摄像头」先发现本机设备；手机请先用 IP 摄像头 App 再粘贴地址添加。")
                 with gr.Column(scale=1):
-                    cam_out = gr.Image(
-                        label="实时检测结果（检测框 / 危险区）", type="filepath", height=360,
+                    live_img = gr.Image(
+                        label="实时画面（边缘端逐帧检测 / 危险区预警）", type="numpy", height=360,
                     )
-                    gr.Markdown("### 🚨 实时告警")
-                    alert_md = gr.Markdown("等待摄像头接入…")
-                    gr.Markdown("### 📝 施工安全巡检报告")
+                    alert_md = gr.Markdown("未开启监控")
+                    gr.Markdown("### 📸 截图与告警记录（自动/主动存证）")
+                    gallery = gr.Gallery(label="截图回看", columns=3, height=240)
+                    shot_md = gr.Markdown(build_shot_md())
                     report_md = gr.Markdown(
-                        "点击「生成云端研判报告」获取当前画面研判（检测到危险区闯入时建议立即生成）。")
-            # 流式逐帧处理：每帧边缘检测 + 危险区规则，实时刷新画面与告警
-            cam.stream(monitor, [cam], [cam_out, alert_md])
-            report_btn.click(make_report, [], [report_md])
+                        "点「生成云端研判报告」获取当前画面研判（检测到危险区闯入时建议立即生成）。")
+            # 摄像头搜索 / 添加 / 开关
+            discover_btn.click(do_discover, None, [source_dd])
+            add_btn.click(add_network, [add_url], [source_dd, status_md])
+            start_btn.click(start_monitor, [source_dd], [status_md])
+            stop_btn.click(stop_monitor, None, [status_md])
+            # 截屏 / 云端报告
+            shot_btn.click(manual_shot, None, [status_md, shot_md])
+            report_btn.click(make_report_rt, None, [report_md])
+            # 前端推流 + 定时刷新（告警/画廊/记录）
+            demo.load(stream_gen, None, [live_img])
+            if hasattr(gr, "Timer"):
+                timer = gr.Timer(1.0)
+                timer.tick(refresh_ui, None, [alert_md, gallery, shot_md])
 
         with gr.Tab("📖 使用说明"):
             if os.path.exists(ARCH_IMG):

@@ -1,6 +1,8 @@
 """边缘推理层：YOLOv8n 本地轻量目标推理（CPU 可跑），并叠加工地安全规则（危险区闯入判定）。"""
 from ultralytics import YOLO
 
+import numpy as np
+
 from config import settings
 
 _model = None
@@ -14,17 +16,19 @@ def get_model():
     return _model
 
 
-def infer(image_path):
+def infer(image):
     """对图片执行目标推理（边缘端轻量模型）。
 
     Args:
-        image_path: 图片路径。
+        image: 图片路径(str) 或 numpy 数组(BGR)。实时摄像头场景直接传帧，
+               避免每帧反复落盘，降低端侧延迟。
     Returns:
         (detections, raw_results)
         detections: [{"label_en", "label_zh", "conf", "box": [x1, y1, x2, y2]}]
     """
     model = get_model()
-    results = model(image_path, conf=settings.DETECTION_CONF, verbose=False)[0]
+    src = image if isinstance(image, np.ndarray) else image
+    results = model(src, conf=settings.DETECTION_CONF, verbose=False)[0]
     detections = []
     for box in results.boxes:
         cls_id = int(box.cls[0])
