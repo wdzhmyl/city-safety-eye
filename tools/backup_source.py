@@ -114,9 +114,9 @@ def main() -> int:
     name = os.environ.get("GIT_USER_NAME", "xiaobai")
     email = os.environ.get("GIT_USER_EMAIL", "1140431160@qq.com")
     try:
+        # 暂存本次快照，并一并纳入其它新增/修改的源码（如脚本自身、说明文档）
         subprocess.check_call(["git", "add", rel_dest], cwd=ROOT)
-        # 同时跟踪 manifest 之外可能的目录级 .gitkeep 变更
-        subprocess.check_call(["git", "add", "-A", "--renormalize"], cwd=ROOT)
+        subprocess.check_call(["git", "add", "-A"], cwd=ROOT)
         msg = f"backup: source snapshot {dir_name}"
         if args.note:
             msg += f" ({args.note})"
