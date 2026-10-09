@@ -1,4 +1,4 @@
-"""配置层：集中管理模型、API 与检测参数。
+"""配置层：集中管理模型、API 与推理参数。
 
 所有可调项集中在此，其余各层只依赖本模块，便于统一修改与环境隔离。
 可通过同目录 .env 文件或系统环境变量覆盖（推荐环境变量，避免泄露密钥）。
@@ -21,7 +21,7 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "800"))
 DETECTION_MODEL = os.getenv("DETECTION_MODEL", "yolov8n.pt")   # 首次运行自动下载
 DETECTION_CONF = float(os.getenv("DETECTION_CONF", "0.35"))    # 置信度阈值
 
-# ===== 中文标签映射：聚焦城市治理相关类别（COCO 子集）=====
+# ===== 中文标签映射：通用目标检测类别（COCO 子集）=====
 LABEL_ZH = {
     "person": "行人",
     "bicycle": "自行车/非机动车",

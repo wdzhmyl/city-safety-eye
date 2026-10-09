@@ -56,29 +56,29 @@ def arrow(x1, y1, x2, y2, color="#334155"):
 
 
 # 各层方框
-box(1.0, 8.6, 8.0, 0.9, "交互层", "interfaces/ · Gradio 网页（可扩展 API / 监测大屏）", P["inter"])
-box(1.0, 7.3, 8.0, 0.9, "编排层", "pipeline.analyze · 串联 检测 → 理解 → 画框", P["pipe"])
-box(1.0, 5.5, 3.7, 1.3, "检测层", "core/detector · YOLOv8n 本地轻量推理（CPU）", P["detect"])
-box(5.3, 6.0, 3.7, 0.9, "理解层", "core/reporter · 云端多模态大模型", P["understand"])
-box(5.3, 5.0, 3.7, 0.8, "兜底层", "core/template · 离线模板报告", P["fallback"])
-box(1.0, 3.5, 8.0, 0.9, "工具层", "utils/ · 画框 / 图片读写 / 临时文件", P["util"])
-box(1.0, 2.2, 8.0, 0.9, "配置层", "config/ · 模型 / API / 阈值 / 中文标签映射", P["config"])
+box(1.0, 8.6, 8.0, 0.9, "交互层", "interfaces/ · Gradio 网页（演示端云协同推理）", P["inter"])
+box(1.0, 7.3, 8.0, 0.9, "编排层", "pipeline.collab · 串联 边缘推理 → 云端理解 → 可视化", P["pipe"])
+box(1.0, 5.5, 3.7, 1.3, "边缘推理层", "core/edge_infer · YOLOv8n 边缘端轻量推理（CPU）", P["detect"])
+box(5.3, 6.0, 3.7, 0.9, "云端理解层", "core/cloud_reason · 云端多模态大模型理解", P["understand"])
+box(5.3, 5.0, 3.7, 0.8, "离线兜底层", "core/fallback_report · 离线兜底报告", P["fallback"])
+box(1.0, 3.5, 8.0, 0.9, "工具层", "utils/ · 可视化 / 图片读写 / 临时文件", P["util"])
+box(1.0, 2.2, 8.0, 0.9, "配置层", "config/ · 模型 / API / 阈值 / 标签映射", P["config"])
 
 # 数据流箭头
 arrow(5.0, 8.6, 5.0, 8.2)        # 交互 → 编排
-arrow(3.0, 7.3, 2.7, 6.8)        # 编排 → 检测
-arrow(7.0, 7.3, 7.15, 6.9)       # 编排 → 理解
-arrow(7.15, 6.0, 7.15, 5.8)      # 理解 → 兜底
-arrow(2.7, 5.5, 4.5, 4.4)        # 检测 → 工具
+arrow(3.0, 7.3, 2.7, 6.8)        # 编排 → 边缘推理
+arrow(7.0, 7.3, 7.15, 6.9)       # 编排 → 云端理解
+arrow(7.15, 6.0, 7.15, 5.8)      # 云端理解 → 兜底
+arrow(2.7, 5.5, 4.5, 4.4)        # 边缘推理 → 工具
 arrow(7.15, 5.0, 6.5, 4.4)       # 兜底 → 工具
 arrow(5.0, 3.5, 5.0, 3.1)        # 工具 → 配置
 
 # 标题与说明
-ax.text(5.0, 10.55, "城市安全之眼 · 系统分层架构", ha="center", va="center",
+ax.text(5.0, 10.55, "端云协同推理平台 · 系统分层架构", ha="center", va="center",
         fontsize=15, fontweight="bold", color="#0f172a")
-ax.text(5.0, 10.15, "检测与理解解耦：YOLO 精确计数画框，多模态大模型负责语义报告",
+ax.text(5.0, 10.15, "边缘推理与云端理解解耦：YOLO 端侧计数画框，多模态大模型负责语义推理",
         ha="center", va="center", fontsize=9.5, color="#475569")
-ax.text(0.3, 1.45, "数据流：上传图片 → 检测 →（理解 / 兜底）→ 画框 → 报告", ha="left",
+ax.text(0.3, 1.45, "数据流：上传图片 → 边缘推理 →（云端理解 / 兜底）→ 可视化 → 报告", ha="left",
         va="center", fontsize=8.5, color="#475569")
 
 plt.tight_layout()

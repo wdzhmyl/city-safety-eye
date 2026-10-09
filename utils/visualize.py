@@ -1,13 +1,13 @@
-"""工具层：在图像上绘制检测框与中文标签。"""
+"""工具层：在图像上绘制推理框与中文标签（可视化推理结果）。"""
 from PIL import Image, ImageDraw
 
 
 def draw_detections(image_path, detections, out_path):
-    """在图片上绘制检测框与标签，输出到 out_path。
+    """在图片上绘制推理框与标签，输出到 out_path（可视化推理结果）。
 
     Args:
         image_path: 原图路径。
-        detections: 检测结果列表（需含 "box" 与 "label_zh"、"conf"）。
+        detections: 推理结果列表（需含 "box" 与 "label_zh"、"conf"）。
         out_path: 标注图输出路径。
     Returns:
         out_path

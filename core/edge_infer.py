@@ -1,4 +1,4 @@
-"""检测层：YOLOv8n 本地轻量目标检测（CPU 可跑，非重模型）。"""
+"""边缘推理层：YOLOv8n 本地轻量目标推理（CPU 可跑，非重模型），体现端侧实时推理能力。"""
 from ultralytics import YOLO
 
 from config import settings
@@ -14,8 +14,8 @@ def get_model():
     return _model
 
 
-def detect(image_path):
-    """对图片执行目标检测。
+def infer(image_path):
+    """对图片执行目标推理（边缘端轻量模型）。
 
     Args:
         image_path: 图片路径。

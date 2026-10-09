@@ -1,4 +1,4 @@
-"""工具层：图片读写与临时文件管理。"""
+"""工具层：图片读写与临时文件管理（推理结果落盘）。"""
 import tempfile
 
 from PIL import Image
