@@ -1,16 +1,28 @@
-"""交互层：Gradio 网页 Demo（演示智慧工地安全巡检 · 端云协同）。"""
+"""交互层：Gradio 网页 Demo（演示智慧工地安全巡检 · 端云协同）。
+
+含两个页面：
+- 「工地图片巡检」：单张图片上传分析（云端/兜底报告）。
+- 「实时监控」：摄像头/监控源逐帧实时检测（边缘端 7×24 盯防），云端研判按需触发。
+"""
 
 import os
 import sys
+import tempfile
+import threading
 from collections import Counter
 
 import gradio as gr
+from PIL import Image
 
 # 兼容 `python interfaces/web.py` 直接启动：把项目根目录加入模块搜索路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import settings
 from pipeline.collab import analyze_image
+from core.edge_infer import infer, check_danger_zone
+from core.cloud_reason import generate_report
+from utils.visualize import draw_detections
+from utils.imgio import new_tempfile
 
 # 当前运行模式（决定报告来源），用于界面提示
 MODE = "云端大模型研判（多模态）" if settings.LLM_API_KEY else "本地离线兜底（未配置 API Key）"
@@ -34,9 +46,14 @@ HEADER = f"""# 🚧 智慧工地安全巡检平台（端云协同）
 
 USAGE = f"""## 使用说明
 
-### 快速上手
+### 快速上手（单图分析）
 1. 左侧上传一张**工地现场图片**，或点击示例图一键试用。
 2. 点击 **🔍 开始巡检**，右侧展示**带检测框的结果图**（危险作业区以橙框标出，闯入目标标红），并自动生成《施工安全巡检报告》。
+
+### 实时监控（摄像头 / 监控接入）
+切换到「🎥 实时监控」页，选择摄像头即可开启**边缘端逐帧实时检测**：每帧本地运行 YOLOv8n 并叠加危险作业区规则，
+检测框、闯入标红与"实时告警"同步刷新。**云端大模型研判为按需触发**（点"生成云端研判报告"），
+边缘 7×24 低成本盯防、仅在需要时调用云端——这正是端云协同 / 推理优化的生产范式。
 
 ### 危险作业区规则
 画面右侧默认圈定一块"危险作业区"，**作业人员 / 工程车辆**等进入该区域即被记为闯入违规（标红预警）。
@@ -66,6 +83,13 @@ footer { visibility: hidden; }
 #header { margin-bottom: 4px; }
 """
 
+# ===== 实时监控的状态（流式逐帧更新，线程安全）=====
+_MONITOR_DIR = tempfile.mkdtemp(prefix="eci_monitor_")
+_FRAME_PATH = os.path.join(_MONITOR_DIR, "frame.jpg")   # 每帧覆盖写入，避免临时文件膨胀
+_OUT_PATH = os.path.join(_MONITOR_DIR, "out.jpg")
+_state = {"detections": [], "intrusions": [], "alert": "等待摄像头接入…"}
+_state_lock = threading.Lock()
+
 
 def build_summary(detections, intrusions=None):
     """把推理结果汇总成概览 Markdown（含危险区闯入预警）。"""
@@ -77,6 +101,40 @@ def build_summary(detections, intrusions=None):
         lines += (f"\n\n⚠️ **危险作业区闯入 {len(intrusions)} 起**（"
                   + "、".join(d["label_zh"] for d in intrusions) + "），请立即核查！")
     return lines
+
+
+def monitor(frame):
+    """摄像头逐帧回调：边缘端实时检测 + 危险区规则，返回标注帧与告警文本。
+
+    云端研判不在此处调用（按需触发），以保证实时性与低成本。
+    """
+    if frame is None:
+        return None, _state["alert"]
+    try:
+        Image.fromarray(frame).save(_FRAME_PATH)
+        detections, _ = infer(_FRAME_PATH)
+        h, w = frame.shape[:2]
+        intrusions, _ = check_danger_zone(detections, (w, h))
+        draw_detections(_FRAME_PATH, detections, _OUT_PATH)
+
+        alert = build_summary(detections, intrusions)
+        with _state_lock:
+            _state["detections"] = detections
+            _state["intrusions"] = intrusions
+            _state["alert"] = alert
+        return _OUT_PATH, alert
+    except Exception as e:  # noqa: BLE001
+        return None, f"识别出错：{e}"
+
+
+def make_report():
+    """按需生成云端/兜底研判报告（基于最近一帧画面）。"""
+    with _state_lock:
+        detections = _state["detections"]
+        intrusions = _state["intrusions"]
+    if not detections and not os.path.exists(_FRAME_PATH):
+        return "请先开启实时监控并等待一帧画面。"
+    return generate_report(detections, _FRAME_PATH, intrusions=intrusions)
 
 
 def analyze(image):
@@ -114,6 +172,27 @@ with gr.Blocks(title="智慧工地安全巡检平台") as demo:
             gr.Markdown("### 📝 施工安全巡检报告")
             report = gr.Markdown("上传图片并点击「开始巡检」后，将在此生成报告。")
             btn.click(analyze, [img], [out_img, report, summary])
+
+        with gr.Tab("🎥 实时监控"):
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=1):
+                    cam = gr.Image(
+                        label="监控画面（边缘端逐帧实时检测）",
+                        sources=["webcam"], streaming=True, height=360,
+                    )
+                    report_btn = gr.Button("📝 生成云端研判报告", variant="primary")
+                with gr.Column(scale=1):
+                    cam_out = gr.Image(
+                        label="实时检测结果（检测框 / 危险区）", type="filepath", height=360,
+                    )
+                    gr.Markdown("### 🚨 实时告警")
+                    alert_md = gr.Markdown("等待摄像头接入…")
+                    gr.Markdown("### 📝 施工安全巡检报告")
+                    report_md = gr.Markdown(
+                        "点击「生成云端研判报告」获取当前画面研判（检测到危险区闯入时建议立即生成）。")
+            # 流式逐帧处理：每帧边缘检测 + 危险区规则，实时刷新画面与告警
+            cam.stream(monitor, [cam], [cam_out, alert_md])
+            report_btn.click(make_report, [], [report_md])
 
         with gr.Tab("📖 使用说明"):
             if os.path.exists(ARCH_IMG):
