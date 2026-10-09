@@ -56,13 +56,13 @@ def arrow(x1, y1, x2, y2, color="#334155"):
 
 
 # 各层方框
-box(1.0, 8.6, 8.0, 0.9, "交互层", "interfaces/ · Gradio 网页（演示端云协同推理）", P["inter"])
-box(1.0, 7.3, 8.0, 0.9, "编排层", "pipeline.collab · 串联 边缘推理 → 云端理解 → 可视化", P["pipe"])
-box(1.0, 5.5, 3.7, 1.3, "边缘推理层", "core/edge_infer · YOLOv8n 边缘端轻量推理（CPU）", P["detect"])
-box(5.3, 6.0, 3.7, 0.9, "云端理解层", "core/cloud_reason · 云端多模态大模型理解", P["understand"])
+box(1.0, 8.6, 8.0, 0.9, "交互层", "interfaces/ · Gradio 网页（演示智慧工地安全巡检）", P["inter"])
+box(1.0, 7.3, 8.0, 0.9, "编排层", "pipeline.collab · 串联 边缘检测→危险区规则→云端理解→可视化", P["pipe"])
+box(1.0, 5.5, 3.7, 1.3, "边缘推理层", "core/edge_infer · YOLOv8n 边缘检测 + 危险区闯入判定（CPU）", P["detect"])
+box(5.3, 6.0, 3.7, 0.9, "云端理解层", "core/cloud_reason · 云端多模态大模型研判", P["understand"])
 box(5.3, 5.0, 3.7, 0.8, "离线兜底层", "core/fallback_report · 离线兜底报告", P["fallback"])
 box(1.0, 3.5, 8.0, 0.9, "工具层", "utils/ · 可视化 / 图片读写 / 临时文件", P["util"])
-box(1.0, 2.2, 8.0, 0.9, "配置层", "config/ · 模型 / API / 阈值 / 标签映射", P["config"])
+box(1.0, 2.2, 8.0, 0.9, "配置层", "config/ · 场景 / 模型 / API / 阈值 / 标签 / 危险区规则", P["config"])
 
 # 数据流箭头
 arrow(5.0, 8.6, 5.0, 8.2)        # 交互 → 编排
@@ -74,11 +74,11 @@ arrow(7.15, 5.0, 6.5, 4.4)       # 兜底 → 工具
 arrow(5.0, 3.5, 5.0, 3.1)        # 工具 → 配置
 
 # 标题与说明
-ax.text(5.0, 10.55, "端云协同推理平台 · 系统分层架构", ha="center", va="center",
+ax.text(5.0, 10.55, "智慧工地安全巡检平台 · 系统分层架构", ha="center", va="center",
         fontsize=15, fontweight="bold", color="#0f172a")
-ax.text(5.0, 10.15, "边缘推理与云端理解解耦：YOLO 端侧计数画框，多模态大模型负责语义推理",
+ax.text(5.0, 10.15, "边缘端实时检测 + 危险区规则，云端大模型负责施工安全语义研判",
         ha="center", va="center", fontsize=9.5, color="#475569")
-ax.text(0.3, 1.45, "数据流：上传图片 → 边缘推理 →（云端理解 / 兜底）→ 可视化 → 报告", ha="left",
+ax.text(0.3, 1.45, "数据流：上传工地图片 → 边缘检测 → 危险区规则 →（云端研判 / 兜底）→ 报告", ha="left",
         va="center", fontsize=8.5, color="#475569")
 
 plt.tight_layout()
